@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Prevent build artifacts from being committed
+llama.cpp/build/
+llama.cpp/.cmake
+llama.cpp/*.o
+

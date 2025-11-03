@@ -1,0 +1,33 @@
+[project]
+name = "cageybtools-twee-local"
+version = "0.1.0"
+description = "A python CLI tool for creating branching narrative stories with LLM support. A CageyBTools Tool."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "llama-cpp-python>=0.3.0",
+    "torch>=2.9.0",
+    "requests>=2.32.5",
+    "tqdm>=4.67.1",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pip>=25.3",
+    "setuptools>=80.9.0",
+    "wheel>=0.45.1",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu130" },
+]
+llama-cpp-python = [
+    { index = "pypi" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/nightly/cu130"
+explicit = true
+
