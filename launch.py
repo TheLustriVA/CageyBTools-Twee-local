@@ -2,13 +2,17 @@
 """
 Interactive LLM-Guided Twee3/SugarCube Story Generator
 A Python tool for creating branching interactive fiction with local LLM support
+OPTIMIZED FOR: LLama-3.1-128k-Darkest-Planet-Uncensored-16.5B-Q8_0.gguf
 
 Requires:
 - llama-cpp-python (for local LLM inference)
 - A GGUF model file (e.g., from Hugging Face)
 
-Usage:
-    python twee_story_generator.py --model path/to/model.gguf
+Usage (with recommended settings):
+    python twee_story_generator.py --model models/LLama-3.1-128k-Darkest-Planet-Uncensored-16.5B-Q8_0.gguf
+
+Usage (with custom settings):
+    python twee_story_generator.py --model path/to/model.gguf --context 16384 --temperature 1.2
 """
 
 import argparse
@@ -16,16 +20,32 @@ import json
 import os
 import re
 import sys
-from typing import Dict, List
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, asdict
 from datetime import datetime
 import uuid
 
 try:
-    from llama_cpp_python import Llama
+    from llama_cpp import Llama
 except ImportError:
     print("Error: llama-cpp-python not installed. Install with: pip install llama-cpp-python")
     sys.exit(1)
+
+# ============================================================================
+# OPTIMIZED PARAMETERS FOR INTERACTIVE FICTION GENERATION
+# These are pre-configured for the Darkest Planet 16.5B model
+# ============================================================================
+OPTIMIZED_PARAMS = {
+    "context_window": 16384,        # 16K context: narrative coherence + speed
+    "temperature": 1.2,              # Creative but not chaotic
+    "top_k": 40,                     # Diverse token selection
+    "top_p": 0.95,                   # Nucleus sampling
+    "min_p": 0.05,                   # Minimum probability threshold
+    "repetition_penalty": 1.07,      # Prevent phrase repetition
+    "repeat_last_n": 64,             # Apply penalty to last 64 tokens
+    "max_tokens": 512,               # Page generation limit
+    "gpu_layers": -1,                # All layers on GPU (RTX 5090)
+}
 
 @dataclass
 class StoryPage:
@@ -59,17 +79,35 @@ class StoryPage:
 class TweeStoryGenerator:
     """Main class for interactive story generation"""
 
-    def __init__(self, model_path: str, n_ctx: int = 4096, n_gpu_layers: int = -1):
-        """Initialize with llama.cpp model"""
+    def __init__(self, model_path: str, context: int = None, temperature: float = None, 
+                 gpu_layers: int = None):
+        """Initialize with llama.cpp model
+
+        Args:
+            model_path: Path to GGUF model file
+            context: Context window size (default: 16384 for Darkest Planet)
+            temperature: Generation temperature (default: 1.2 for creative writing)
+            gpu_layers: GPU layers to use (-1 = all, default: -1 for RTX 5090)
+        """
+        # Use optimized params if not specified
+        context = context or OPTIMIZED_PARAMS["context_window"]
+        temperature = temperature or OPTIMIZED_PARAMS["temperature"]
+        gpu_layers = gpu_layers if gpu_layers is not None else OPTIMIZED_PARAMS["gpu_layers"]
+
         print(f"Loading model: {model_path}")
+        print(f"Configuration:")
+        print(f"  Context window: {context} tokens")
+        print(f"  Temperature: {temperature}")
+        print(f"  GPU layers: {gpu_layers if gpu_layers != -1 else 'All (recommended)'}")
+
         try:
             self.llm = Llama(
                 model_path=model_path,
-                n_ctx=n_ctx,
-                n_gpu_layers=n_gpu_layers,
+                n_ctx=context,
+                n_gpu_layers=gpu_layers,
                 verbose=False
             )
-            print("Model loaded successfully!")
+            print("âœ“ Model loaded successfully!\n")
         except Exception as e:
             print(f"Error loading model: {e}")
             sys.exit(1)
@@ -77,14 +115,24 @@ class TweeStoryGenerator:
         self.story_pages: Dict[str, StoryPage] = {}
         self.story_title = ""
         self.story_ifid = str(uuid.uuid4())
+        self.temperature = temperature
 
-    def generate_text(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7) -> str:
-        """Generate text using the loaded LLM"""
+    def generate_text(self, prompt: str, max_tokens: int = None, 
+                     temperature: float = None) -> str:
+        """Generate text using the loaded LLM with optimized parameters"""
+        max_tokens = max_tokens or OPTIMIZED_PARAMS["max_tokens"]
+        temperature = temperature or self.temperature
+
         try:
             response = self.llm(
                 prompt,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                top_k=OPTIMIZED_PARAMS["top_k"],
+                top_p=OPTIMIZED_PARAMS["top_p"],
+                min_p=OPTIMIZED_PARAMS["min_p"],
+                repeat_penalty=OPTIMIZED_PARAMS["repetition_penalty"],
+                repeat_last_n=OPTIMIZED_PARAMS["repeat_last_n"],
                 stop=["\n\n---", "\n\nUser:", "\n\nHuman:", "\n\n##"],
                 echo=False
             )
@@ -95,16 +143,14 @@ class TweeStoryGenerator:
 
     def sanitize_page_name(self, name: str) -> str:
         """Convert text to valid Twee passage name"""
-        # Remove special characters, keep alphanumeric and spaces
         sanitized = re.sub(r'[^a-zA-Z0-9\s-]', '', name)
-        # Replace spaces with underscores, collapse multiple spaces
         sanitized = re.sub(r'\s+', '_', sanitized.strip())
-        # Ensure it starts with a letter
         if sanitized and not sanitized[0].isalpha():
             sanitized = "Page_" + sanitized
         return sanitized or "Unnamed_Page"
 
-    def create_story_page(self, page_name: str, content_prompt: str, choice_prompts: List[str]) -> StoryPage:
+    def create_story_page(self, page_name: str, content_prompt: str, 
+                         choice_prompts: List[str]) -> StoryPage:
         """Create a new story page using LLM"""
 
         # Create the prompt for the LLM
@@ -196,6 +242,7 @@ Content:"""
         if not choices:
             choices = ["Continue", "Look around", "Check inventory"]
 
+        print("\nGenerating opening page with LLM...")
         start_page = self.create_story_page("Start", content_prompt, choices)
         self.story_pages["Start"] = start_page
 
@@ -204,7 +251,7 @@ Content:"""
             if link not in self.story_pages:
                 self.story_pages[link] = StoryPage(name=link)
 
-        print(f"\n✓ Created Start page with {len(start_page.links)} choice(s)")
+        print(f"\nâœ“ Created Start page with {len(start_page.links)} choice(s)")
 
     def complete_page(self, page_name: str):
         """Complete an incomplete page"""
@@ -224,6 +271,7 @@ Content:"""
             choices.append(choice)
 
         # Generate the page content
+        print("\nGenerating page with LLM...")
         updated_page = self.create_story_page(page_name, content_prompt, choices)
         self.story_pages[page_name] = updated_page
 
@@ -232,7 +280,7 @@ Content:"""
             if link not in self.story_pages:
                 self.story_pages[link] = StoryPage(name=link)
 
-        print(f"\n✓ Completed page '{page_name}' with {len(updated_page.links)} choice(s)")
+        print(f"\nâœ“ Completed page '{page_name}' with {len(updated_page.links)} choice(s)")
 
         # Show the generated content for review
         print("\n--- Generated Content ---")
@@ -260,7 +308,7 @@ Content:"""
         new_content = input().strip()
         if new_content:
             page.content = new_content
-            print("✓ Content updated")
+            print("âœ“ Content updated")
 
     def show_story_status(self):
         """Display current story status"""
@@ -318,6 +366,7 @@ Content:"""
                 break
             choices.append(choice)
 
+        print("\nGenerating page with LLM...")
         new_page = self.create_story_page(page_name, content_prompt, choices)
         self.story_pages[page_name] = new_page
 
@@ -326,7 +375,7 @@ Content:"""
             if link not in self.story_pages:
                 self.story_pages[link] = StoryPage(name=link)
 
-        print(f"✓ Created page '{page_name}'")
+        print(f"âœ“ Created page '{page_name}'")
 
     def view_page(self):
         """View an existing page"""
@@ -334,7 +383,7 @@ Content:"""
         page_names = list(self.story_pages.keys())
 
         for i, name in enumerate(page_names, 1):
-            status = "✓" if self.story_pages[name].completed else "○"
+            status = "âœ“" if self.story_pages[name].completed else "â—‹"
             print(f"  {i}. {status} {name}")
 
         try:
@@ -390,26 +439,41 @@ Content:"""
                         f.write(page.to_twee())
                         f.write("\n")
 
-            print(f"\n✓ Story exported to: {filename}")
+            print(f"\nâœ“ Story exported to: {filename}")
             print(f"Pages exported: {sum(1 for p in self.story_pages.values() if p.completed)}")
 
         except Exception as e:
             print(f"Error exporting story: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Interactive LLM-Guided Twee3/SugarCube Story Generator")
+    parser = argparse.ArgumentParser(
+        description="Interactive LLM-Guided Twee3/SugarCube Story Generator",
+        epilog="\nRECOMMENDED USAGE:\n"
+               "  python twee_story_generator.py --model models/LLama-3.1-128k-Darkest-Planet-Uncensored-16.5B-Q8_0.gguf\n\n"
+               "CUSTOM SETTINGS:\n"
+               "  --context 16384    (default: optimized for narrative coherence)\n"
+               "  --temperature 1.2  (default: creative but stable)\n"
+               "  --gpu-layers -1    (default: all layers on GPU for RTX 5090)",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
     parser.add_argument("--model", "-m", required=True, help="Path to GGUF model file")
-    parser.add_argument("--context", "-c", type=int, default=4096, help="Context size (default: 4096)")
-    parser.add_argument("--gpu-layers", "-g", type=int, default=-1, help="GPU layers (-1 for all, default: -1)")
+    parser.add_argument("--context", "-c", type=int, default=None, 
+                       help=f"Context size (default: {OPTIMIZED_PARAMS['context_window']})")
+    parser.add_argument("--temperature", "-t", type=float, default=None,
+                       help=f"Temperature (default: {OPTIMIZED_PARAMS['temperature']})")
+    parser.add_argument("--gpu-layers", "-g", type=int, default=None, 
+                       help="GPU layers (-1 for all, default: -1)")
 
     args = parser.parse_args()
 
     if not os.path.exists(args.model):
         print(f"Error: Model file not found: {args.model}")
+        print(f"Expected path: {args.model}")
         sys.exit(1)
 
     try:
-        generator = TweeStoryGenerator(args.model, args.context, args.gpu_layers)
+        generator = TweeStoryGenerator(args.model, args.context, args.temperature, args.gpu_layers)
         generator.start_new_story()
     except KeyboardInterrupt:
         print("\n\nExiting...")

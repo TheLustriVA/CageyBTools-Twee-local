@@ -212,3 +212,6 @@ llama.cpp/build/
 llama.cpp/.cmake
 llama.cpp/*.o
 
+benchmarking/
+llama.cpp/
+scripts/
